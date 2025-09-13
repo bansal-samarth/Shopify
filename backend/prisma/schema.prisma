@@ -13,6 +13,7 @@ datasource db {
 model Tenant {
   id         Int      @id @default(autoincrement())
   shopDomain String   @unique // "14dgk9-my.myshopify.com" from the webhook header
+  webhookSecret String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 

@@ -16,63 +16,50 @@ const app = express();
 
 // A simple health check route
 app.get('/', (req, res) => {
-  res.send('Server is alive and running!');
+  res.send('Multi-tenant Shopify Webhook Server is running!');
+});
+
+// Endpoint to register/update webhook secrets for tenants
+app.post('/admin/tenant-secret', express.json(), async (req, res) => {
+  const { shopDomain, webhookSecret } = req.body;
+  
+  if (!shopDomain || !webhookSecret) {
+    return res.status(400).json({ error: 'shopDomain and webhookSecret are required' });
+  }
+  
+  try {
+    const tenant = await prisma.tenant.upsert({
+      where: { shopDomain },
+      update: { webhookSecret },
+      create: { shopDomain, webhookSecret }
+    });
+    
+    res.json({ message: 'Webhook secret updated successfully', tenantId: tenant.id });
+  } catch (error) {
+    console.error('Error updating tenant secret:', error);
+    res.status(500).json({ error: 'Failed to update webhook secret' });
+  }
 });
 
 // This is the single endpoint for all Shopify webhooks
-// IMPORTANT: We use express.raw to get the raw request body, which is required for HMAC verification.
-// This must come BEFORE any other body-parsing middleware like express.json().
 app.post('/webhooks', express.raw({ type: 'application/json' }), async (req, res) => {
     
-    // --- 1. HMAC Signature Verification ---
+    // --- 1. Extract Headers ---
     const hmacHeader = req.get('X-Shopify-Hmac-Sha256');
+    const shopDomain = req.get('X-Shopify-Shop-Domain');
+    const topic = req.get('X-Shopify-Topic');
     const body = req.body;
-    const shopifySecret = process.env.SHOPIFY_WEBHOOK_SECRET;
 
-    // Debug logging (consider removing in production)
-    console.log('🔍 Debug Info:');
-    console.log('HMAC Header:', hmacHeader);
-    console.log('Body type:', typeof body);
-    console.log('Body length:', body ? body.length : 'undefined');
-    console.log('Secret exists:', !!shopifySecret);
+    console.log('🔍 Webhook received:');
+    console.log('Shop Domain:', shopDomain);
+    console.log('Topic:', topic);
 
-    // Verify we have all required data
+    // Basic validation
     if (!hmacHeader) {
         console.log('❌ No HMAC header found');
         return res.status(401).send('No HMAC header');
     }
 
-    if (!shopifySecret) {
-        console.log('❌ No webhook secret configured');
-        return res.status(500).send('Server configuration error');
-    }
-
-    if (!body) {
-        console.log('❌ No body found');
-        return res.status(400).send('No body');
-    }
-
-    // Create HMAC hash
-    const hash = crypto
-      .createHmac('sha256', shopifySecret)
-      .update(body)
-      .digest('base64');
-
-    console.log('Generated hash:', hash);
-    console.log('Expected hash:', hmacHeader);
-    console.log('Hashes match:', hash === hmacHeader);
-    
-    if (hash !== hmacHeader) {
-      console.log('⚠️ Webhook verification failed: HMAC mismatch.');
-      return res.status(401).send('Unauthorized');
-    }
-    
-    console.log('✅ Webhook Verified');
-
-    // --- 2. Identify Tenant and Topic ---
-    const shopDomain = req.get('X-Shopify-Shop-Domain');
-    const topic = req.get('X-Shopify-Topic');
-    
     if (!shopDomain) {
         console.log('❌ No shop domain found in headers');
         return res.status(400).send('Missing shop domain');
@@ -82,33 +69,63 @@ app.post('/webhooks', express.raw({ type: 'application/json' }), async (req, res
         console.log('❌ No topic found in headers');
         return res.status(400).send('Missing topic');
     }
-    
-    console.log('Shop Domain:', shopDomain);
-    console.log('Topic:', topic);
 
-    let payload;
-    try {
-        payload = JSON.parse(body.toString());
-    } catch (parseError) {
-        console.error('❌ Failed to parse JSON payload:', parseError);
-        return res.status(400).send('Invalid JSON payload');
+    if (!body) {
+        console.log('❌ No body found');
+        return res.status(400).send('No body');
     }
 
     try {
-        // --- 3. Find or Create the Tenant ---
-        const tenant = await prisma.tenant.upsert({
-            where: { shopDomain: shopDomain },
-            update: {
-                updatedAt: new Date()
-            },
-            create: { 
-                shopDomain: shopDomain,
-            },
+        // --- 2. Find Tenant and Get Webhook Secret ---
+        const tenant = await prisma.tenant.findUnique({
+            where: { shopDomain }
         });
 
-        console.log(`📊 Using tenant ID: ${tenant.id} for shop: ${shopDomain}`);
+        if (!tenant) {
+            console.log(`❌ Tenant not found for domain: ${shopDomain}`);
+            return res.status(404).send('Tenant not found. Please register this store first.');
+        }
 
-        // --- 4. Route to the Correct Handler based on Topic ---
+        if (!tenant.webhookSecret) {
+            console.log(`❌ No webhook secret configured for tenant: ${shopDomain}`);
+            return res.status(500).send('Webhook secret not configured for this tenant');
+        }
+
+        // --- 3. HMAC Signature Verification ---
+        const hash = crypto
+            .createHmac('sha256', tenant.webhookSecret)
+            .update(body)
+            .digest('base64');
+
+        console.log('Generated hash:', hash);
+        console.log('Expected hash:', hmacHeader);
+        console.log('Hashes match:', hash === hmacHeader);
+        
+        if (hash !== hmacHeader) {
+            console.log(`⚠️ Webhook verification failed for ${shopDomain}: HMAC mismatch.`);
+            return res.status(401).send('Unauthorized');
+        }
+        
+        console.log('✅ Webhook Verified for tenant:', shopDomain);
+
+        // --- 4. Parse Payload ---
+        let payload;
+        try {
+            payload = JSON.parse(body.toString());
+        } catch (parseError) {
+            console.error('❌ Failed to parse JSON payload:', parseError);
+            return res.status(400).send('Invalid JSON payload');
+        }
+
+        // --- 5. Update Tenant Last Activity ---
+        await prisma.tenant.update({
+            where: { id: tenant.id },
+            data: { updatedAt: new Date() }
+        });
+
+        console.log(`📊 Processing webhook for tenant ID: ${tenant.id} (${shopDomain})`);
+
+        // --- 6. Route to the Correct Handler based on Topic ---
         console.log(`📨 Processing webhook for topic: ${topic}`);
         switch (topic) {
             case 'products/create':
@@ -125,11 +142,10 @@ app.post('/webhooks', express.raw({ type: 'application/json' }), async (req, res
                 break;
             default:
                 console.log(`⚠️ Unhandled topic: ${topic}`);
-                // Still return 200 to prevent retries for unsupported webhooks
                 break;
         }
 
-        // --- 5. Respond to Shopify ---
+        // --- 7. Respond to Shopify ---
         console.log('✅ Webhook processed successfully');
         res.status(200).send('OK');
 
@@ -137,11 +153,9 @@ app.post('/webhooks', express.raw({ type: 'application/json' }), async (req, res
         console.error('❌ Error processing webhook:', error);
         console.error('Stack trace:', error.stack);
         
-        // If it's a database connection error, we might want Shopify to retry
         if (error.code === 'P1001' || error.code === 'P1017') {
             res.status(500).send('Database connection error - please retry');
         } else {
-            // For other errors, we might not want retries
             res.status(422).send('Error processing webhook data');
         }
     }
@@ -162,6 +176,7 @@ process.on('SIGTERM', async () => {
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server is running on http://localhost:${PORT}`);
+  console.log(`🚀 Multi-tenant Shopify Webhook Server running on http://localhost:${PORT}`);
   console.log(`📝 Webhook endpoint: http://localhost:${PORT}/webhooks`);
+  console.log(`⚙️  Admin endpoint: http://localhost:${PORT}/admin/tenant-secret`);
 });
