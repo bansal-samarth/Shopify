@@ -13,6 +13,8 @@ datasource db {
 model Tenant {
   id         Int      @id @default(autoincrement())
   shopDomain String   @unique // "14dgk9-my.myshopify.com" from the webhook header
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   // Relationships to the data owned by this tenant
   customers  Customer[]
@@ -22,34 +24,45 @@ model Tenant {
 
 model Customer {
   id                Int      @id @default(autoincrement())
-  shopifyCustomerId String   @unique // From the Customer webhook `id` field
+  shopifyCustomerId String   // From the Customer webhook `id` field
   email             String?
   firstName         String?
   lastName          String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   tenantId          Int
   tenant            Tenant   @relation(fields: [tenantId], references: [id])
 
   // A customer can have many orders
   orders            Order[]
+
+  // Composite unique constraint: same customer ID can exist across different tenants
+  @@unique([shopifyCustomerId, tenantId])
 }
 
 model Product {
   id               Int      @id @default(autoincrement())
-  shopifyProductId String   @unique // From the Product webhook `id` field
+  shopifyProductId String   // From the Product webhook `id` field
   title            String
   vendor           String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   tenantId         Int
   tenant           Tenant   @relation(fields: [tenantId], references: [id])
+
+  // Composite unique constraint: same product ID can exist across different tenants
+  @@unique([shopifyProductId, tenantId])
 }
 
 model Order {
   id                Int       @id @default(autoincrement())
-  shopifyOrderId    String    @unique // From the Order webhook `id` field
+  shopifyOrderId    String    // From the Order webhook `id` field
   totalPrice        Decimal   @db.Decimal(10, 2) // Using Decimal for financial accuracy
   financialStatus   String    // e.g., "paid", "pending", "refunded"
   createdAt         DateTime  // From the Order webhook `created_at` field
+  updatedAt         DateTime  @updatedAt
 
   tenantId          Int
   tenant            Tenant    @relation(fields: [tenantId], references: [id])
@@ -57,4 +70,7 @@ model Order {
   // This establishes the many-to-one relationship from Order to Customer
   customerId        Int?      // This is the foreign key to OUR internal Customer ID
   customer          Customer? @relation(fields: [customerId], references: [id])
+
+  // Composite unique constraint: same order ID can exist across different tenants
+  @@unique([shopifyOrderId, tenantId])
 }

@@ -2,6 +2,8 @@
 CREATE TABLE "public"."Tenant" (
     "id" SERIAL NOT NULL,
     "shopDomain" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "Tenant_pkey" PRIMARY KEY ("id")
 );
@@ -13,6 +15,8 @@ CREATE TABLE "public"."Customer" (
     "email" TEXT,
     "firstName" TEXT,
     "lastName" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
     "tenantId" INTEGER NOT NULL,
 
     CONSTRAINT "Customer_pkey" PRIMARY KEY ("id")
@@ -24,6 +28,8 @@ CREATE TABLE "public"."Product" (
     "shopifyProductId" TEXT NOT NULL,
     "title" TEXT NOT NULL,
     "vendor" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
     "tenantId" INTEGER NOT NULL,
 
     CONSTRAINT "Product_pkey" PRIMARY KEY ("id")
@@ -36,6 +42,7 @@ CREATE TABLE "public"."Order" (
     "totalPrice" DECIMAL(10,2) NOT NULL,
     "financialStatus" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
     "tenantId" INTEGER NOT NULL,
     "customerId" INTEGER,
 
@@ -46,13 +53,13 @@ CREATE TABLE "public"."Order" (
 CREATE UNIQUE INDEX "Tenant_shopDomain_key" ON "public"."Tenant"("shopDomain");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Customer_shopifyCustomerId_key" ON "public"."Customer"("shopifyCustomerId");
+CREATE UNIQUE INDEX "Customer_shopifyCustomerId_tenantId_key" ON "public"."Customer"("shopifyCustomerId", "tenantId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Product_shopifyProductId_key" ON "public"."Product"("shopifyProductId");
+CREATE UNIQUE INDEX "Product_shopifyProductId_tenantId_key" ON "public"."Product"("shopifyProductId", "tenantId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Order_shopifyOrderId_key" ON "public"."Order"("shopifyOrderId");
+CREATE UNIQUE INDEX "Order_shopifyOrderId_tenantId_key" ON "public"."Order"("shopifyOrderId", "tenantId");
 
 -- AddForeignKey
 ALTER TABLE "public"."Customer" ADD CONSTRAINT "Customer_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "public"."Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

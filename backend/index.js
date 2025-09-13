@@ -9,6 +9,7 @@ const {
   handleProductCreate,
   handleCustomerCreate,
   handleOrderCreate,
+  handleFulfillmentCreate,
 } = require('./services/webhookHandlers');
 
 const app = express();
@@ -26,15 +27,14 @@ app.post('/webhooks', express.raw({ type: 'application/json' }), async (req, res
     // --- 1. HMAC Signature Verification ---
     const hmacHeader = req.get('X-Shopify-Hmac-Sha256');
     const body = req.body;
-    const shopifySecret = process.env.SHOPIFY_WEBHOOK_SECRET; // Changed from SHOPIFY_API_SECRET
+    const shopifySecret = process.env.SHOPIFY_WEBHOOK_SECRET;
 
-    // Debug logging
+    // Debug logging (consider removing in production)
     console.log('🔍 Debug Info:');
     console.log('HMAC Header:', hmacHeader);
     console.log('Body type:', typeof body);
     console.log('Body length:', body ? body.length : 'undefined');
     console.log('Secret exists:', !!shopifySecret);
-    console.log('Secret length:', shopifySecret ? shopifySecret.length : 'undefined');
 
     // Verify we have all required data
     if (!hmacHeader) {
@@ -52,10 +52,10 @@ app.post('/webhooks', express.raw({ type: 'application/json' }), async (req, res
         return res.status(400).send('No body');
     }
 
-    // Create HMAC hash - try both with and without 'utf8' encoding
+    // Create HMAC hash
     const hash = crypto
       .createHmac('sha256', shopifySecret)
-      .update(body) // Removed 'utf8' encoding - body is already a Buffer
+      .update(body)
       .digest('base64');
 
     console.log('Generated hash:', hash);
@@ -64,16 +64,6 @@ app.post('/webhooks', express.raw({ type: 'application/json' }), async (req, res
     
     if (hash !== hmacHeader) {
       console.log('⚠️ Webhook verification failed: HMAC mismatch.');
-      
-      // Additional debugging - try with utf8 encoding as fallback
-      const hashUtf8 = crypto
-        .createHmac('sha256', shopifySecret)
-        .update(body, 'utf8')
-        .digest('base64');
-      
-      console.log('Hash with UTF8:', hashUtf8);
-      console.log('UTF8 hash matches:', hashUtf8 === hmacHeader);
-      
       return res.status(401).send('Unauthorized');
     }
     
@@ -82,6 +72,16 @@ app.post('/webhooks', express.raw({ type: 'application/json' }), async (req, res
     // --- 2. Identify Tenant and Topic ---
     const shopDomain = req.get('X-Shopify-Shop-Domain');
     const topic = req.get('X-Shopify-Topic');
+    
+    if (!shopDomain) {
+        console.log('❌ No shop domain found in headers');
+        return res.status(400).send('Missing shop domain');
+    }
+    
+    if (!topic) {
+        console.log('❌ No topic found in headers');
+        return res.status(400).send('Missing topic');
+    }
     
     console.log('Shop Domain:', shopDomain);
     console.log('Topic:', topic);
@@ -98,9 +98,15 @@ app.post('/webhooks', express.raw({ type: 'application/json' }), async (req, res
         // --- 3. Find or Create the Tenant ---
         const tenant = await prisma.tenant.upsert({
             where: { shopDomain: shopDomain },
-            update: {},
-            create: { shopDomain: shopDomain },
+            update: {
+                updatedAt: new Date()
+            },
+            create: { 
+                shopDomain: shopDomain,
+            },
         });
+
+        console.log(`📊 Using tenant ID: ${tenant.id} for shop: ${shopDomain}`);
 
         // --- 4. Route to the Correct Handler based on Topic ---
         console.log(`📨 Processing webhook for topic: ${topic}`);
@@ -114,8 +120,12 @@ app.post('/webhooks', express.raw({ type: 'application/json' }), async (req, res
             case 'orders/create':
                 await handleOrderCreate(payload, tenant.id);
                 break;
+            case 'fulfillments/create':
+                await handleFulfillmentCreate(payload, tenant.id);
+                break;
             default:
                 console.log(`⚠️ Unhandled topic: ${topic}`);
+                // Still return 200 to prevent retries for unsupported webhooks
                 break;
         }
 
@@ -125,9 +135,29 @@ app.post('/webhooks', express.raw({ type: 'application/json' }), async (req, res
 
     } catch (error) {
         console.error('❌ Error processing webhook:', error);
-        // If an error occurs, send a 500 status code. Shopify will then retry the webhook.
-        res.status(500).send('Error processing webhook');
+        console.error('Stack trace:', error.stack);
+        
+        // If it's a database connection error, we might want Shopify to retry
+        if (error.code === 'P1001' || error.code === 'P1017') {
+            res.status(500).send('Database connection error - please retry');
+        } else {
+            // For other errors, we might not want retries
+            res.status(422).send('Error processing webhook data');
+        }
     }
+});
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('🛑 Shutting down gracefully...');
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('🛑 Shutting down gracefully...');
+  await prisma.$disconnect();
+  process.exit(0);
 });
 
 const PORT = process.env.PORT || 4000;
