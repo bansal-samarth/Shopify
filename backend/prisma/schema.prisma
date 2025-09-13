@@ -1,0 +1,60 @@
+// In backend/prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// A Tenant is a connected Shopify Store
+model Tenant {
+  id         Int      @id @default(autoincrement())
+  shopDomain String   @unique // "14dgk9-my.myshopify.com" from the webhook header
+
+  // Relationships to the data owned by this tenant
+  customers  Customer[]
+  products   Product[]
+  orders     Order[]
+}
+
+model Customer {
+  id                Int      @id @default(autoincrement())
+  shopifyCustomerId String   @unique // From the Customer webhook `id` field
+  email             String?
+  firstName         String?
+  lastName          String?
+
+  tenantId          Int
+  tenant            Tenant   @relation(fields: [tenantId], references: [id])
+
+  // A customer can have many orders
+  orders            Order[]
+}
+
+model Product {
+  id               Int      @id @default(autoincrement())
+  shopifyProductId String   @unique // From the Product webhook `id` field
+  title            String
+  vendor           String
+
+  tenantId         Int
+  tenant           Tenant   @relation(fields: [tenantId], references: [id])
+}
+
+model Order {
+  id                Int       @id @default(autoincrement())
+  shopifyOrderId    String    @unique // From the Order webhook `id` field
+  totalPrice        Decimal   @db.Decimal(10, 2) // Using Decimal for financial accuracy
+  financialStatus   String    // e.g., "paid", "pending", "refunded"
+  createdAt         DateTime  // From the Order webhook `created_at` field
+
+  tenantId          Int
+  tenant            Tenant    @relation(fields: [tenantId], references: [id])
+
+  // This establishes the many-to-one relationship from Order to Customer
+  customerId        Int?      // This is the foreign key to OUR internal Customer ID
+  customer          Customer? @relation(fields: [customerId], references: [id])
+}
