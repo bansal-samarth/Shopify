@@ -21,6 +21,20 @@ model Tenant {
   customers  Customer[]
   products   Product[]
   orders     Order[]
+  auths      Auth[]
+}
+
+model Auth {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  password  String   // Should be hashed before storing
+  createdAt DateTime @default(now())
+
+  tenantId  Int
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+
+  // Composite unique constraint: same username can exist across different tenants
+  @@unique([username, tenantId])
 }
 
 model Customer {

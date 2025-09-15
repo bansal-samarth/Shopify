@@ -161,6 +161,97 @@ app.post('/webhooks', express.raw({ type: 'application/json' }), async (req, res
     }
 });
 
+// Add this code to your index.js file after the existing /admin/tenant-secret endpoint
+
+const bcrypt = require('bcrypt'); // You'll need to install this: npm install bcrypt
+
+// Admin endpoint to register auth users
+app.post('/admin/auth-user', express.json(), async (req, res) => {
+  try {
+    const { username, password, tenantId } = req.body;
+
+    // Validate required fields
+    if (!username || !password || !tenantId) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: username, password, tenantId' 
+      });
+    }
+
+    // Check if tenant exists
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId }
+    });
+
+    if (!tenant) {
+      return res.status(400).json({ 
+        error: `Tenant with ID ${tenantId} not found` 
+      });
+    }
+
+    // Hash the password
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+    // Check if user already exists for this tenant
+    const existingUser = await prisma.auth.findUnique({
+      where: {
+        username_tenantId: {
+          username: username,
+          tenantId: tenantId
+        }
+      }
+    });
+
+    if (existingUser) {
+      return res.status(409).json({ 
+        error: `User "${username}" already exists for tenant ${tenantId}` 
+      });
+    }
+
+    // Create the auth user
+    const authUser = await prisma.auth.create({
+      data: {
+        username,
+        password: hashedPassword,
+        tenantId
+      },
+      select: {
+        id: true,
+        username: true,
+        tenantId: true,
+        createdAt: true,
+        tenant: {
+          select: {
+            shopDomain: true
+          }
+        }
+      }
+    });
+
+    console.log(`✅ Auth user created: ${username} for tenant ${tenant.shopDomain}`);
+
+    res.json({
+      message: 'Auth user registered successfully',
+      user: authUser
+    });
+
+  } catch (error) {
+    console.error('❌ Error registering auth user:', error);
+    
+    if (error.code === 'P2002') {
+      // Prisma unique constraint violation
+      res.status(409).json({ 
+        error: 'Username already exists for this tenant' 
+      });
+    } else {
+      res.status(500).json({ 
+        error: 'Internal server error',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  }
+});
+
 // Graceful shutdown
 process.on('SIGINT', async () => {
   console.log('🛑 Shutting down gracefully...');
