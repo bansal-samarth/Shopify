@@ -3,7 +3,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { Calendar, DollarSign, Users, ShoppingCart, LogOut, Package, Store } from 'lucide-react';
 
 // API Configuration - Update this if your backend is deployed elsewhere
-const API_BASE = 'https://shopify-c669.onrender.com/';
+const API_BASE = 'https://shopify-c669.onrender.com';
 
 // API functions for interacting with the backend
 const api = {
