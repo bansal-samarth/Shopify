@@ -2,6 +2,12 @@
 
 A robust Node.js/Express backend service that handles Shopify webhooks for multiple stores (multi-tenancy) with real-time data synchronization to PostgreSQL database.
 
+## Project Links
+
+- Frontend: [Frontend repository](https://shopify-three-blue.vercel.app/)
+- Backend:  [Backend repository](https://shopify-c669.onrender.com/)
+
+
 ## 🚀 Features
 
 - **Multi-Tenant Architecture**: Handles multiple Shopify stores with proper data isolation
